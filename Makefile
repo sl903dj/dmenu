@@ -14,7 +14,8 @@ all: dmenu stest
 config.h:
 	cp config.def.h $@
 
-$(OBJ): arg.h config.h config.mk drw.h
+$(OBJ): arg.h config.h config.mk drw.h util.h
+dmenu.o: inputmethod.h inputmethod.c
 
 dmenu: dmenu.o drw.o util.o
 	$(CC) -o $@ dmenu.o drw.o util.o $(LDFLAGS)

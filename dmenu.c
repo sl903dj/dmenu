@@ -53,6 +53,9 @@ static Drw *drw;
 static Clr *scheme[SchemeLast];
 
 #include "config.h"
+#if INPUTMETHOD_PATCH
+#include "inputmethod.h"
+#endif
 
 static int (*fstrncmp)(const char *, const char *, size_t) = strncmp;
 static char *(*fstrstr)(const char *, const char *) = strstr;
@@ -101,6 +104,9 @@ cleanup(void)
 	size_t i;
 
 	XUngrabKeyboard(dpy, CurrentTime);
+	#if INPUTMETHOD_PATCH
+	XSetInputFocus(dpy, root, RevertToPointerRoot, CurrentTime);
+	#endif // INPUTMETHOD_PATCH
 	for (i = 0; i < SchemeLast; i++)
 		free(scheme[i]);
 	for (i = 0; items && items[i].text; ++i)
@@ -578,8 +584,15 @@ run(void)
 	XEvent ev;
 
 	while (!XNextEvent(dpy, &ev)) {
+		#if INPUTMETHOD_PATCH
+		if (XFilterEvent(&ev, None))
+			continue;
+		if (composing)
+			continue;
+		#else
 		if (XFilterEvent(&ev, win))
 			continue;
+		#endif // INPUTMETHOD_PATCH
 		switch(ev.type) {
 		case DestroyNotify:
 			if (ev.xdestroywindow.window != win)
@@ -693,8 +706,14 @@ setup(void)
 	if ((xim = XOpenIM(dpy, NULL, NULL, NULL)) == NULL)
 		die("XOpenIM failed: could not open input device");
 
+	#if INPUTMETHOD_PATCH
+	init_input_method(xim);
+	#else
+
 	xic = XCreateIC(xim, XNInputStyle, XIMPreeditNothing | XIMStatusNothing,
 	                XNClientWindow, win, XNFocusWindow, win, NULL);
+
+	#endif // INPUTMETHOD_PATCH
 
 	XMapRaised(dpy, win);
 	if (embed) {
@@ -705,8 +724,13 @@ setup(void)
 				XSelectInput(dpy, dws[i], FocusChangeMask);
 			XFree(dws);
 		}
+		#if !INPUTMETHOD_PATCH
 		grabfocus();
+		#endif // INPUTMETHOD_PATCH
 	}
+	#if INPUTMETHOD_PATCH
+	grabfocus();
+	#endif // INPUTMETHOD_PATCH
 	drw_resize(drw, mw, mh);
 	drawmenu();
 }
@@ -717,6 +741,10 @@ usage(void)
 	die("usage: dmenu [-bfiv] [-l lines] [-p prompt] [-fn font] [-m monitor]\n"
 	    "             [-nb color] [-nf color] [-sb color] [-sf color] [-w windowid]");
 }
+
+#if INPUTMETHOD_PATCH
+#include "inputmethod.c"
+#endif
 
 int
 main(int argc, char *argv[])
@@ -762,6 +790,10 @@ main(int argc, char *argv[])
 
 	if (!setlocale(LC_CTYPE, "") || !XSupportsLocale())
 		fputs("warning: no locale support\n", stderr);
+	#if INPUTMETHOD_PATCH
+	if (!XSetLocaleModifiers(""))
+		fputs("warning: could not set locale modifiers", stderr);
+	#endif // INPUTMETHOD_PATCH
 	if (!(dpy = XOpenDisplay(NULL)))
 		die("cannot open display");
 	screen = DefaultScreen(dpy);

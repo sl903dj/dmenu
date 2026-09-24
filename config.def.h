@@ -21,3 +21,6 @@ static unsigned int lines      = 0;
  * for example: " /?\"&[]"
  */
 static const char worddelimiters[] = " ";
+
+/* Enable/Disable input method patch (1 = enabled, 0 = disabled) */
+#define INPUTMETHOD_PATCH 1
