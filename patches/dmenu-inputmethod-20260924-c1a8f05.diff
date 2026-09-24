@@ -1,0 +1,387 @@
+From c1a8f05794aa088bd274132915e8bc3dc3d51ede Mon Sep 17 00:00:00 2001
+From: sl903dj <sl903dj@hotmail.com>
+Date: Thu, 24 Sep 2026 11:01:15 +0800
+Subject: [PATCH] apply dmenu-inputmethod-20260924-c2e1bd4.diff
+
+---
+ Makefile      |   3 +-
+ config.def.h  |   3 +
+ dmenu.c       |  32 ++++++++
+ inputmethod.c | 216 ++++++++++++++++++++++++++++++++++++++++++++++++++
+ inputmethod.h |  24 ++++++
+ 5 files changed, 277 insertions(+), 1 deletion(-)
+ create mode 100644 inputmethod.c
+ create mode 100644 inputmethod.h
+
+diff --git a/Makefile b/Makefile
+index 997e517..365d96a 100644
+--- a/Makefile
++++ b/Makefile
+@@ -14,7 +14,8 @@ all: dmenu stest
+ config.h:
+ 	cp config.def.h $@
+ 
+-$(OBJ): arg.h config.h config.mk drw.h
++$(OBJ): arg.h config.h config.mk drw.h util.h
++dmenu.o: inputmethod.h inputmethod.c
+ 
+ dmenu: dmenu.o drw.o util.o
+ 	$(CC) -o $@ dmenu.o drw.o util.o $(LDFLAGS)
+diff --git a/config.def.h b/config.def.h
+index 1edb647..c2c59d0 100644
+--- a/config.def.h
++++ b/config.def.h
+@@ -21,3 +21,6 @@ static unsigned int lines      = 0;
+  * for example: " /?\"&[]"
+  */
+ static const char worddelimiters[] = " ";
++
++/* Enable/Disable input method patch (1 = enabled, 0 = disabled) */
++#define INPUTMETHOD_PATCH 1
+diff --git a/dmenu.c b/dmenu.c
+index fd49549..ace9916 100644
+--- a/dmenu.c
++++ b/dmenu.c
+@@ -53,6 +53,9 @@ static Drw *drw;
+ static Clr *scheme[SchemeLast];
+ 
+ #include "config.h"
++#if INPUTMETHOD_PATCH
++#include "inputmethod.h"
++#endif
+ 
+ static int (*fstrncmp)(const char *, const char *, size_t) = strncmp;
+ static char *(*fstrstr)(const char *, const char *) = strstr;
+@@ -101,6 +104,9 @@ cleanup(void)
+ 	size_t i;
+ 
+ 	XUngrabKeyboard(dpy, CurrentTime);
++	#if INPUTMETHOD_PATCH
++	XSetInputFocus(dpy, root, RevertToPointerRoot, CurrentTime);
++	#endif // INPUTMETHOD_PATCH
+ 	for (i = 0; i < SchemeLast; i++)
+ 		free(scheme[i]);
+ 	for (i = 0; items && items[i].text; ++i)
+@@ -578,8 +584,15 @@ run(void)
+ 	XEvent ev;
+ 
+ 	while (!XNextEvent(dpy, &ev)) {
++		#if INPUTMETHOD_PATCH
++		if (XFilterEvent(&ev, None))
++			continue;
++		if (composing)
++			continue;
++		#else
+ 		if (XFilterEvent(&ev, win))
+ 			continue;
++		#endif // INPUTMETHOD_PATCH
+ 		switch(ev.type) {
+ 		case DestroyNotify:
+ 			if (ev.xdestroywindow.window != win)
+@@ -693,9 +706,15 @@ setup(void)
+ 	if ((xim = XOpenIM(dpy, NULL, NULL, NULL)) == NULL)
+ 		die("XOpenIM failed: could not open input device");
+ 
++	#if INPUTMETHOD_PATCH
++	init_input_method(xim);
++	#else
++
+ 	xic = XCreateIC(xim, XNInputStyle, XIMPreeditNothing | XIMStatusNothing,
+ 	                XNClientWindow, win, XNFocusWindow, win, NULL);
+ 
++	#endif // INPUTMETHOD_PATCH
++
+ 	XMapRaised(dpy, win);
+ 	if (embed) {
+ 		XReparentWindow(dpy, win, parentwin, x, y);
+@@ -705,8 +724,13 @@ setup(void)
+ 				XSelectInput(dpy, dws[i], FocusChangeMask);
+ 			XFree(dws);
+ 		}
++		#if !INPUTMETHOD_PATCH
+ 		grabfocus();
++		#endif // INPUTMETHOD_PATCH
+ 	}
++	#if INPUTMETHOD_PATCH
++	grabfocus();
++	#endif // INPUTMETHOD_PATCH
+ 	drw_resize(drw, mw, mh);
+ 	drawmenu();
+ }
+@@ -718,6 +742,10 @@ usage(void)
+ 	    "             [-nb color] [-nf color] [-sb color] [-sf color] [-w windowid]");
+ }
+ 
++#if INPUTMETHOD_PATCH
++#include "inputmethod.c"
++#endif
++
+ int
+ main(int argc, char *argv[])
+ {
+@@ -762,6 +790,10 @@ main(int argc, char *argv[])
+ 
+ 	if (!setlocale(LC_CTYPE, "") || !XSupportsLocale())
+ 		fputs("warning: no locale support\n", stderr);
++	#if INPUTMETHOD_PATCH
++	if (!XSetLocaleModifiers(""))
++		fputs("warning: could not set locale modifiers", stderr);
++	#endif // INPUTMETHOD_PATCH
+ 	if (!(dpy = XOpenDisplay(NULL)))
+ 		die("cannot open display");
+ 	screen = DefaultScreen(dpy);
+diff --git a/inputmethod.c b/inputmethod.c
+new file mode 100644
+index 0000000..ac3e3fa
+--- /dev/null
++++ b/inputmethod.c
+@@ -0,0 +1,216 @@
++#include <stdio.h>
++#include <string.h>
++#include <X11/Xlib.h>
++#include "inputmethod.h"
++
++/* 真正分配内存的变量实体 */
++int composing = 0;
++char preview[512] = "";
++
++/* 引用来自 dmenu.c 的全局变量 */
++extern char text[BUFSIZ];
++extern size_t cursor;
++extern Window win;
++extern Display *dpy;
++extern XIC xic;
++
++/* 引用来自 dmenu.c 的内部函数 */
++extern size_t nextrune(int inc);
++extern void movewordedge(int dir);
++
++size_t nextrunetext(const char *text, size_t position, int inc)
++{
++	ssize_t n;
++
++	/* return location of next utf8 rune in the given direction (+1 or -1) */
++	for (n = position + inc; n + inc >= 0 && (text[n] & 0xc0) == 0x80; n += inc)
++		;
++	return n;
++}
++
++/* return bytes from beginning of text to nth utf8 rune to the right */
++size_t runebytes(const char *text, size_t n)
++{
++	size_t ret;
++
++	ret = 0;
++	while (n-- > 0)
++		ret += nextrunetext(text + ret, 0, 1);
++	return ret;
++}
++
++/* return number of characters from beginning of text to nth byte to the right */
++size_t runechars(const char *text, size_t n)
++{
++	size_t ret, i;
++
++	ret = i = 0;
++	while (i < n) {
++		i += nextrunetext(text + i, 0, 1);
++		ret++;
++	}
++	return ret;
++}
++
++/* move caret on pre-edit text */
++void preeditcaret(XIC xic_arg, XPointer clientdata, XPointer calldata)
++{
++	XIMPreeditCaretCallbackStruct *pcaret;
++
++	(void)xic_arg;
++	(void)clientdata;
++	pcaret = (XIMPreeditCaretCallbackStruct *)calldata;
++	if (!pcaret)
++		return;
++	switch (pcaret->direction) {
++	case XIMForwardChar:
++		cursor = nextrune(+1);
++		break;
++	case XIMBackwardChar:
++		cursor = nextrune(-1);
++		break;
++	case XIMForwardWord:
++		movewordedge(+1);
++		break;
++	case XIMBackwardWord:
++		movewordedge(-1);
++		break;
++	case XIMLineStart:
++		cursor = 0;
++		break;
++	case XIMLineEnd:
++		if (preview[cursor] != '\0')
++			cursor = strlen(preview);
++		break;
++	case XIMAbsolutePosition:
++		cursor = runebytes(text, pcaret->position);
++		break;
++	case XIMDontChange:
++		/* do nothing */
++		break;
++	case XIMCaretUp:
++	case XIMCaretDown:
++	case XIMNextLine:
++	case XIMPreviousLine:
++		/* not implemented */
++		break;
++	}
++	pcaret->position = runechars(preview, cursor);
++}
++
++/* start input method pre-editing */
++int preeditstart(XIC xic_arg, XPointer clientdata, XPointer calldata)
++{
++	(void)xic_arg;
++	(void)calldata;
++	(void)clientdata;
++	composing = 1;
++	printf("PREEDIT\n");
++	return BUFSIZ;
++}
++
++/* end input method pre-editing */
++void preeditdone(XIC xic_arg, XPointer clientdata, XPointer calldata)
++{
++	(void)xic_arg;
++	(void)clientdata;
++	(void)calldata;
++	printf("DONE\n");
++
++	composing = 0;
++}
++
++/* draw input method pre-edit text */
++void preeditdraw(XIC xic_arg, XPointer clientdata, XPointer calldata)
++{
++	XIMPreeditDrawCallbackStruct *pdraw;
++	size_t beg, dellen, inslen, endlen;
++
++	printf("DRAW\n");
++
++	(void)xic_arg;
++	(void)clientdata;
++	pdraw = (XIMPreeditDrawCallbackStruct *)calldata;
++	if (!pdraw)
++		return;
++
++	/* we do not support wide characters */
++	if (pdraw->text && pdraw->text->encoding_is_wchar == True) {
++		fputs("warning: wchar is not supported; use utf8\n", stderr);
++		return;
++	}
++
++	beg = runebytes(text, pdraw->chg_first);
++	dellen = runebytes(preview + beg, pdraw->chg_length);
++	inslen = pdraw->text ? runebytes(pdraw->text->string.multi_byte, pdraw->text->length) : 0;
++	endlen = 0;
++	if (beg + dellen < strlen(preview))
++		endlen = strlen(preview + beg + dellen);
++
++	/* we cannot change text past the end of our pre-edit string */
++	if (beg + dellen >= BUFSIZ || beg + inslen >= BUFSIZ)
++		return;
++
++	/* get space for text to be copied, and copy it */
++	memmove(preview + beg + inslen, preview + beg + dellen, endlen + 1);
++	if (pdraw->text && pdraw->text->length)
++		memcpy(preview + beg, pdraw->text->string.multi_byte, inslen);
++	(preview + beg + inslen + endlen)[0] = '\0';
++
++	/* get caret position */
++	cursor = runebytes(text, pdraw->caret);
++}
++
++void init_input_method(XIM xim)
++{
++	XVaNestedList preedit = NULL;
++	XICCallback start, done, draw, caret;
++	XIMStyle preeditstyle;
++	XIMStyle statusstyle;
++	XIMStyles *imstyles;
++	int i;
++
++	/* get styles supported by input method */
++	if (XGetIMValues(xim, XNQueryInputStyle, &imstyles, NULL) != NULL)
++		fputs("XGetIMValues: could not obtain input method values\n", stderr);
++
++	/* check whether input method support on-the-spot pre-editing */
++	preeditstyle = XIMPreeditNothing;
++	statusstyle = XIMStatusNothing;
++	for (i = 0; i < imstyles->count_styles; i++) {
++		if (imstyles->supported_styles[i] & XIMPreeditCallbacks) {
++			preeditstyle = XIMPreeditCallbacks;
++			break;
++		}
++	}
++
++	/* create callbacks for the input context */
++	start.client_data = NULL;
++	done.client_data = NULL;
++	draw.client_data = (XPointer)text;
++	caret.client_data = (XPointer)text;
++	start.callback = (XICProc)preeditstart;
++	done.callback = (XICProc)preeditdone;
++	draw.callback = (XICProc)preeditdraw;
++	caret.callback = (XICProc)preeditcaret;
++
++	/* create list of values for input context */
++	preedit = XVaCreateNestedList(0, XNPreeditStartCallback, &start, XNPreeditDoneCallback,
++				      &done, XNPreeditDrawCallback, &draw, XNPreeditCaretCallback,
++				      &caret, NULL);
++	if (preedit == NULL)
++		fputs("XVaCreateNestedList: could not create nested list\n", stderr);
++
++	xic = XCreateIC(xim, XNInputStyle, preeditstyle | statusstyle, XNPreeditAttributes, preedit,
++			XNClientWindow, win, XNFocusWindow, win, NULL);
++	XFree(preedit);
++
++	long eventmask;
++	/* get events the input method is interested in */
++	if (XGetICValues(xic, XNFilterEvents, &eventmask, NULL))
++		fputs("XGetICValues: could not obtain input context values\n", stderr);
++
++	XSelectInput(dpy, win,
++		     ExposureMask | KeyPressMask | VisibilityChangeMask | ButtonPressMask |
++		     PointerMotionMask | eventmask);
++}
+diff --git a/inputmethod.h b/inputmethod.h
+new file mode 100644
+index 0000000..c6a952c
+--- /dev/null
++++ b/inputmethod.h
+@@ -0,0 +1,24 @@
++#ifndef INPUTMETHOD_H
++#define INPUTMETHOD_H
++
++#include <stddef.h>
++#include <X11/Xlib.h>
++
++/* 全局变量声明 (加 extern，定义移到 .c 中) */
++extern int composing;
++extern char preview[512];
++
++/* 供 dmenu.c 调用的核心初始化函数 */
++void init_input_method(XIM xim);
++
++/* 内部工具函数与 IM 回调函数声明 */
++size_t nextrunetext(const char *text, size_t position, int inc);
++size_t runebytes(const char *text, size_t n);
++size_t runechars(const char *text, size_t n);
++
++void preeditcaret(XIC xic, XPointer clientdata, XPointer calldata);
++int preeditstart(XIC xic, XPointer clientdata, XPointer calldata);
++void preeditdone(XIC xic, XPointer clientdata, XPointer calldata);
++void preeditdraw(XIC xic, XPointer clientdata, XPointer calldata);
++
++#endif
+-- 
+2.55.0
+
