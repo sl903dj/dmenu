@@ -1,10 +1,25 @@
 #!/bin/sh
 
-# 寻找所有 .desktop 文件，提取 Name 和 Exec 字段并使用 dmenu 选择启动
+# 1. 获取所有 .desktop 文件及其 Name 和文件名映射
+# 找到选中的应用名称
 APP=$(grep -h -m 1 "^Name=" /usr/share/applications/*.desktop ~/.local/share/applications/*.desktop 2>/dev/null | cut -d= -f2- | sort -u | dmenu -i -p "Apps:")
 
 if [ -n "$APP" ]; then
-  # 根据选中的 Name 找到对应的 Exec 命令并后台运行
-  EXEC=$(grep -l -m 1 "^Name=$APP" /usr/share/applications/*.desktop ~/.local/share/applications/*.desktop 2>/dev/null | xargs grep -m 1 "^Exec=" | cut -d= -f2- | sed 's/ %[uUfFiIkK]//g')
-  eval "$EXEC" &
+  # 2. 根据 Name 找到对应的 .desktop 文件绝对路径
+  DESKTOP_FILE=$(grep -l -m 1 "^Name=$APP" /usr/share/applications/*.desktop ~/.local/share/applications/*.desktop 2>/dev/null | head -n 1)
+
+  if [ -n "$DESKTOP_FILE" ]; then
+    # 获取不带路径的文件名（如 google-chrome.desktop）
+    DESKTOP_NAME=$(basename "$DESKTOP_FILE")
+
+    # 优先使用系统标准工具 gtk-launch 启动（最稳定，完美解决 Chrome/Edge 二次拉起问题）
+    if command -v gtk-launch >/dev/null 2>&1; then
+      gtk-launch "$DESKTOP_NAME" >/dev/null 2>&1 &
+    else
+      # 如果没有 gtk-launch，使用安全提取 Exec 并切断标准流（nohup + disown）的方式
+      EXEC=$(grep -m 1 "^Exec=" "$DESKTOP_FILE" | cut -d= -f2- | sed 's/ %[a-zA-Z]//g')
+      nohup sh -c "$EXEC" >/dev/null 2>&1 &
+      disown
+    fi
+  fi
 fi
