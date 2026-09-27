@@ -1,0 +1,10 @@
+#!/bin/sh
+
+# 寻找所有 .desktop 文件，提取 Name 和 Exec 字段并使用 dmenu 选择启动
+APP=$(grep -h -m 1 "^Name=" /usr/share/applications/*.desktop ~/.local/share/applications/*.desktop 2>/dev/null | cut -d= -f2- | sort -u | dmenu -i -p "Apps:")
+
+if [ -n "$APP" ]; then
+  # 根据选中的 Name 找到对应的 Exec 命令并后台运行
+  EXEC=$(grep -l -m 1 "^Name=$APP" /usr/share/applications/*.desktop ~/.local/share/applications/*.desktop 2>/dev/null | xargs grep -m 1 "^Exec=" | cut -d= -f2- | sed 's/ %[uUfFiIkK]//g')
+  eval "$EXEC" &
+fi
