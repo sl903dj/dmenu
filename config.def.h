@@ -2,10 +2,17 @@
 /* Default settings; can be overriden by command line. */
 
 static int topbar = 1;                      /* -b  option; if 0, dmenu appears at bottom     */
+
+static unsigned int barpadh = 300;
+static unsigned int barpadv = 100;
+static unsigned int barheight = 10;
+static unsigned int barborder = 0;
+
 static const unsigned int alpha = 0xee;     /* Amount of opacity. 0xff is opaque             */
 /* -fn option overrides fonts[0]; default X11 font or font set */
 static const char *fonts[] = {
-	"monospace:size=10"
+	"JetBrainsMono Nerd Font:style=Regular:size=10:antialias=true:autohint=true",
+	"WenQuanYi Micro Hei:style=Regular:size=10:antialias=true:autohint=true"
 };
 static const char *prompt      = NULL;      /* -p  option; prompt to the left of input field */
 static const char *colors[SchemeLast][2] = {
@@ -13,6 +20,7 @@ static const char *colors[SchemeLast][2] = {
 	[SchemeNorm] = { "#bbbbbb", "#222222" },
 	[SchemeSel] = { "#eeeeee", "#005577" },
 	[SchemeOut] = { "#000000", "#00ffff" },
+	[SchemeBorder] = { "#005577", "#005577" },
 };
 
 static const unsigned int alphas[SchemeLast][2] = {

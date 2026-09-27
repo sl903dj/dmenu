@@ -29,7 +29,7 @@
 #define OPAQUE                0xffu
 
 /* enums */
-enum { SchemeNorm, SchemeSel, SchemeOut, SchemeLast }; /* color schemes */
+enum { SchemeNorm, SchemeSel, SchemeOut, SchemeBorder, SchemeLast }; /* color schemes */
 
 struct item {
 	char *text;
@@ -656,7 +656,7 @@ setup(void)
 	utf8 = XInternAtom(dpy, "UTF8_STRING", False);
 
 	/* calculate menu geometry */
-	bh = drw->fonts->h + 2;
+	bh = drw->fonts->h + 2 + 2 * barheight;
 	lines = MAX(lines, 0);
 	mh = (lines + 1) * bh;
 #ifdef XINERAMA
@@ -685,9 +685,9 @@ setup(void)
 				if (INTERSECT(x, y, 1, 1, info[i]) != 0)
 					break;
 
-		x = info[i].x_org;
-		y = info[i].y_org + (topbar ? 0 : info[i].height - mh);
-		mw = info[i].width;
+		x = info[i].x_org + barpadh;
+		y = info[i].y_org + (topbar ? barpadv : info[i].height - mh - barpadv);
+		mw = info[i].width - 2 * barpadh;
 		XFree(info);
 	} else
 #endif
@@ -695,9 +695,9 @@ setup(void)
 		if (!XGetWindowAttributes(dpy, parentwin, &wa))
 			die("could not get embedding window attributes: 0x%lx",
 			    parentwin);
-		x = 0;
-		y = topbar ? 0 : wa.height - mh;
-		mw = wa.width;
+		x = barpadh;
+		y = topbar ? barpadv : wa.height - mh - barpadv;
+		mw = wa.width - 2 * barpadh;
 	}
 	promptw = (prompt && *prompt) ? TEXTW(prompt) - lrpad / 4 : 0;
 	inputw = mw / 3; /* input width: ~33% of monitor width */
@@ -708,10 +708,12 @@ setup(void)
 	swa.border_pixel = 0;
 	swa.colormap = cmap;
 	swa.event_mask = ExposureMask | KeyPressMask | VisibilityChangeMask;
-	win = XCreateWindow(dpy, root, x, y, mw, mh, 0,
+	win = XCreateWindow(dpy, root, x, y, mw, mh, barborder,
 	                    depth, CopyFromParent, visual,
 	                    CWOverrideRedirect | CWBackPixel | CWBorderPixel | CWColormap | CWEventMask, &swa);
-	XSetClassHint(dpy, win, &ch);
+	if (barborder)
+		XSetWindowBorder(dpy, win, scheme[SchemeBorder][ColFg].pixel);
+  XSetClassHint(dpy, win, &ch);
 
 	/* input methods */
 	if ((xim = XOpenIM(dpy, NULL, NULL, NULL)) == NULL)
@@ -790,10 +792,14 @@ main(int argc, char *argv[])
 			colors[SchemeNorm][ColBg] = argv[++i];
 		else if (!strcmp(argv[i], "-nf"))  /* normal foreground color */
 			colors[SchemeNorm][ColFg] = argv[++i];
-		else if (!strcmp(argv[i], "-sb"))  /* selected background color */
+		else if (!strcmp(argv[i], "-sb")) {  /* selected background color */
 			colors[SchemeSel][ColBg] = argv[++i];
+			colors[SchemeSel][ColFg] = colors[SchemeSel][ColBg];
+		}
 		else if (!strcmp(argv[i], "-sf"))  /* selected foreground color */
 			colors[SchemeSel][ColFg] = argv[++i];
+		else if (!strcmp(argv[i], "-bo"))  /* border colour */
+			colors[SchemeBorder][ColFg] = argv[++i];
 		else if (!strcmp(argv[i], "-w"))   /* embedding window id */
 			embed = argv[++i];
 		else
