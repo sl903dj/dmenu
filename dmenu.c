@@ -484,9 +484,20 @@ insert:
 		/* fallthrough */
 	case XK_Up:
 	case XK_KP_Up:
-		if (sel && sel->left && (sel = sel->left)->right == curr) {
+		if (sel && sel->left) {
+			if ((sel = sel->left)->right == curr) {
+				curr = prev;
+				calcoffsets();
+			}
+		} else if (matches) {
+			/* 已到最顶部，跳转至最底部（循环） */
+			sel = matchend;
+			curr = matchend;
+			calcoffsets();
 			curr = prev;
 			calcoffsets();
+			while (next && (curr = curr->right))
+				calcoffsets();
 		}
 		break;
 	case XK_Next:
@@ -524,8 +535,14 @@ insert:
 		/* fallthrough */
 	case XK_Down:
 	case XK_KP_Down:
-		if (sel && sel->right && (sel = sel->right) == next) {
-			curr = next;
+		if (sel && sel->right) {
+			if ((sel = sel->right) == next) {
+				curr = next;
+				calcoffsets();
+			}
+		} else if (matches) {
+			/* 已到最底部，跳转至最顶部（循环） */
+			sel = curr = matches;
 			calcoffsets();
 		}
 		break;
