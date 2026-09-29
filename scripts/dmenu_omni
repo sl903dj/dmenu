@@ -18,9 +18,20 @@ ICON_FILE=" "
 # 1. 获取所有的 App（带图标前缀）
 APPS=$(grep -h -m 1 "^Name=" /usr/share/applications/*.desktop ~/.local/share/applications/*.desktop 2>/dev/null | cut -d= -f2- | sort -u | sed "s/^/$ICON_APP/")
 
-# 2. 利用 fd 原生 -t d / -t f 分类输出目录与文件
-DIRS=$(fd . "$HOME" --max-depth 3 --type d --hidden --exclude ".git" --exclude ".cache" 2>/dev/null | sed "s/^/$ICON_DIR/")
-FILES=$(fd . "$HOME" --max-depth 3 --type f --hidden --exclude ".git" --exclude ".cache" 2>/dev/null | sed "s/^/$ICON_FILE/")
+# 2. 原有 Home 目录扫描（保持 3 层极速扫描）
+DIRS_HOME=$(fd . "$HOME" --max-depth 3 --type d --hidden --exclude ".git" --exclude ".cache" 2>/dev/null)
+FILES_HOME=$(fd . "$HOME" --max-depth 3 --type f --hidden --exclude ".git" --exclude ".cache" 2>/dev/null)
+
+# 坚果云专项扫描（支持深层目录，如 max-depth 8）
+NUTSTORE_PATH="$HOME/Nutstore Files"
+if [ -d "$NUTSTORE_PATH" ]; then
+  DIRS_NUT=$(fd . "$NUTSTORE_PATH" --max-depth 8 --type d 2>/dev/null)
+  FILES_NUT=$(fd . "$NUTSTORE_PATH" --max-depth 8 --type f 2>/dev/null)
+fi
+
+# 汇总并添加图标
+DIRS=$(printf "%s\n%s" "$DIRS_HOME" "$DIRS_NUT" | sed "/^$/d; s/^/$ICON_DIR/")
+FILES=$(printf "%s\n%s" "$FILES_HOME" "$FILES_NUT" | sed "/^$/d; s/^/$ICON_FILE/")
 
 # 3. 合并候选项目
 ALL_ITEMS=$(printf "%s\n%s\n%s" "$APPS" "$DIRS" "$FILES")
