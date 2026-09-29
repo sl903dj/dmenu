@@ -475,12 +475,29 @@ insert:
 		break;
 	case XK_Left:
 	case XK_KP_Left:
-		if (cursor > 0 && (!sel || !sel->left || lines > 0)) {
+		if (cursor > 0) {
 			cursor = nextrune(-1);
 			break;
 		}
-		if (lines > 0)
-			return;
+		if (lines > 0) {
+			/* 垂直模式下光标已在最左，按左键触发【向上/反向】循环 */
+			if (sel && sel->left) {
+				if ((sel = sel->left)->right == curr) {
+					curr = prev;
+					calcoffsets();
+				}
+			} else if (matches) {
+				/* 已到最顶部，按左键循环跳转至最底部 */
+				sel = matchend;
+				curr = matchend;
+				calcoffsets();
+				curr = prev;
+				calcoffsets();
+				while (next && (curr = curr->right))
+					calcoffsets();
+			}
+			break;
+		}
 		/* fallthrough */
 	case XK_Up:
 	case XK_KP_Up:
@@ -530,8 +547,20 @@ insert:
 			cursor = nextrune(+1);
 			break;
 		}
-		if (lines > 0)
-			return;
+		if (lines > 0) {
+			/* 垂直模式下光标已在最右，按右键触发【向下/正向】循环 */
+			if (sel && sel->right) {
+				if ((sel = sel->right) == next) {
+					curr = next;
+					calcoffsets();
+				}
+			} else if (matches) {
+				/* 已到最底部，按右键循环跳转至最顶部 */
+				sel = curr = matches;
+				calcoffsets();
+			}
+			break;
+		}
 		/* fallthrough */
 	case XK_Down:
 	case XK_KP_Down:
