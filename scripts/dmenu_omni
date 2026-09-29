@@ -1,0 +1,80 @@
+#!/bin/sh
+
+# ==============================================================================
+# 配置区域
+# ==============================================================================
+# 缓存与历史记录路径
+CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}"
+HISTORY_FILE="$CACHE_DIR/dmenu_omni_history"
+
+# 视觉图标配置（Unicode / Nerd Fonts）
+ICON_APP=" "
+ICON_DIR=" "
+ICON_FILE=" "
+
+# ==============================================================================
+# 数据源提取与性能优化（零 Shell Fork，毫秒级响应）
+# ==============================================================================
+# 1. 获取所有的 App（带图标前缀）
+APPS=$(grep -h -m 1 "^Name=" /usr/share/applications/*.desktop ~/.local/share/applications/*.desktop 2>/dev/null | cut -d= -f2- | sort -u | sed "s/^/$ICON_APP/")
+
+# 2. 利用 fd 原生 -t d / -t f 分类输出目录与文件
+DIRS=$(fd . "$HOME" --max-depth 3 --type d --hidden --exclude ".git" --exclude ".cache" 2>/dev/null | sed "s/^/$ICON_DIR/")
+FILES=$(fd . "$HOME" --max-depth 3 --type f --hidden --exclude ".git" --exclude ".cache" 2>/dev/null | sed "s/^/$ICON_FILE/")
+
+# 3. 合并候选项目
+ALL_ITEMS=$(printf "%s\n%s\n%s" "$APPS" "$DIRS" "$FILES")
+
+# ==============================================================================
+# 高频自动置顶逻辑 (Frequency Sorting)
+# ==============================================================================
+if [ -f "$HISTORY_FILE" ]; then
+  SORTED_HISTORY=$(sort "$HISTORY_FILE" | uniq -c | sort -nr | awk '{$1=""; print $0}' | sed 's/^ //')
+  FULL_LIST=$(printf "%s\n%s" "$SORTED_HISTORY" "$ALL_ITEMS" | awk '!seen[$0]++')
+else
+  FULL_LIST="$ALL_ITEMS"
+fi
+
+# ==============================================================================
+# 唤起 dmenu 进行交互
+# ==============================================================================
+SELECTED=$(printf "%s\n" "$FULL_LIST" | dmenu -i -l 12)
+
+# ==============================================================================
+# 选定后的解析与分发执行
+# ==============================================================================
+if [ -n "$SELECTED" ]; then
+  # 写入历史记录文件（用于频次统计）
+  echo "$SELECTED" >>"$HISTORY_FILE"
+
+  case "$SELECTED" in
+  "$ICON_APP"*)
+    # --- 1. 启动 GUI 应用 ---
+    APP_NAME=$(echo "$SELECTED" | sed "s/^$ICON_APP//")
+    DESKTOP_FILE=$(grep -l -m 1 "^Name=$APP_NAME" /usr/share/applications/*.desktop ~/.local/share/applications/*.desktop 2>/dev/null | head -n 1)
+
+    if [ -n "$DESKTOP_FILE" ]; then
+      DESKTOP_NAME=$(basename "$DESKTOP_FILE")
+      if command -v gtk-launch >/dev/null 2>&1; then
+        gtk-launch "$DESKTOP_NAME" >/dev/null 2>&1 &
+      else
+        EXEC=$(grep -m 1 "^Exec=" "$DESKTOP_FILE" | cut -d= -f2- | sed 's/ %[a-zA-Z]//g')
+        nohup sh -c "$EXEC" >/dev/null 2>&1 &
+        disown
+      fi
+    fi
+    ;;
+
+  "$ICON_DIR"* | "$ICON_FILE"*)
+    # --- 2. 打开文件或文件夹 ---
+    FILE_PATH=$(echo "$SELECTED" | sed -E "s/^($ICON_DIR|$ICON_FILE)//")
+    xdg-open "$FILE_PATH" >/dev/null 2>&1 &
+    ;;
+
+  *)
+    # --- 3. 最小限度系统指令支持（reboot, shutdown, poweroff 等无界面指令）---
+    nohup sh -c "$SELECTED" >/dev/null 2>&1 &
+    disown
+    ;;
+  esac
+fi
